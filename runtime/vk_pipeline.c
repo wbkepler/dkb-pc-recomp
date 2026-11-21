@@ -1624,11 +1624,17 @@ static int uses_src1(const VkPipeState *s) {
 // too: TOTK's half-res transparency pass binds its linear depth (R32F) as target 7, samples it in the same draws and
 // writes only targets 0-2, 4 and 5; zeroed, the depth that later passes rebuild from it was 0 in tiles, and the fog
 // over distant geometry showed rectangles of clear sky.
-static uint32_t target_wmask(const VkPipeState *s, int i) {
+static inline uint32_t target_wmask_with(const VkPipeState *s, int i, uint32_t om, int src1) {
     uint32_t m = s->chmask.mask >> (4 * i) & 0xf;
-    if (s->fs && !(gfx_shader_outputs(s->fs, NULL) >> i & 1)) m = 0;
-    if (i == 1 && s->fs && P.f_dual_src && uses_src1(s)) m = 0;   // output 1 is the second blend source (spirv_dual_source)
+    if (s->fs && !(om >> i & 1)) m = 0;
+    if (i == 1 && src1) m = 0;   // output 1 is the second blend source (spirv_dual_source)
     return m;
+}
+
+static uint32_t target_wmask(const VkPipeState *s, int i) {
+    uint32_t om = s->fs ? gfx_shader_outputs(s->fs, NULL) : 0xffu;
+    int src1 = i == 1 && s->fs && P.f_dual_src && uses_src1(s);
+    return target_wmask_with(s, i, om, src1);
 }
 
 uint32_t vk_pipeline_target_wmask(const VkPipeState *s, int i) { return target_wmask(s, i); }
@@ -3655,12 +3661,7 @@ void vk_pipeline_set_dynamic_from(VkCommandBuffer cb, const VkPipeState *s, cons
     }
     if (need_wm) {
         VkColorComponentFlags wm[8];
-        for (int i = 0; i < n; i++) {
-            uint32_t m = s->chmask.mask >> (4 * i) & 0xf;
-            if (s->fs && !(om_s >> i & 1)) m = 0;
-            if (i == 1 && src1_s) m = 0;
-            wm[i] = m;
-        }
+        for (int i = 0; i < n; i++) wm[i] = target_wmask_with(s, i, om_s, src1_s);
         rec_write_mask(P.set_wmask, cb, 0, (uint32_t)n, wm);
     }
 }

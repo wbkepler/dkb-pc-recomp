@@ -888,6 +888,7 @@ def main():
         extract_function(pipe_src, 'static int target_count('),
         extract_function(pipe_src, 'static int is_src1('),
         extract_function(pipe_src, 'static int uses_src1('),
+        extract_function(pipe_src, 'static inline uint32_t target_wmask_with('),
         extract_function(pipe_src, 'static int vertex_input_same('),
         extract_function(pipe_src, 'void vk_pipeline_set_dynamic_from('),
         extract_function(pipe_src, 'static VkPipeline graphics('),
