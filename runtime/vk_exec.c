@@ -3135,7 +3135,16 @@ void vk_exec_lookahead(VkExec *ex) {
 }
 
 static void walk(VkExec *ex, const op_hdr *h, int depth);
-static int par_skip_start;   // stop op after a mid-OP_CALL flush in par_collect_walk: replay it unsliced, as walk() does
+static _Thread_local int par_skip_start;   // stop op after a mid-OP_CALL flush in par_collect_walk: replay it unsliced, as walk() does
+
+// TOTK_PAR_COLLECT_WALK (on by default): iterative single-switch collection loop (par_collect_walk) handles OP_BEGIN,
+// OP_JUMP, OP_CALL and binds without recursing walk() on every call. 0 falls back to walk() + par_take() for bisecting;
+// ab alternates the two with the A/B blocks. Read on the replay thread only.
+static int par_collect_walk_on(void) {
+    static int mode = -1;
+    if (mode < 0) mode = rt_knob("PAR_COLLECT_WALK", "1");
+    return RT_KNOB_ON(mode);
+}
 
 // Iterative single-switch collection loop while PC.on && !P.next: handles OP_BEGIN, OP_JUMP and OP_CALL in-loop using a
 // local return stack instead of recursing walk() on every call, fusing par_take and par_bind_op into one switch.
@@ -3259,7 +3268,7 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
         const void *a = nvn_op_payload(h);
         int skip_par = par_skip_start;
         par_skip_start = 0;
-        if (PC.on && !P.next && h->op != OP_END) {
+        if (PC.on && !P.next && par_collect_walk_on() && h->op != OP_END) {
             int res = 0;
             h = par_collect_walk(ex, h, depth, &res);
             if (res) continue;
@@ -3274,7 +3283,7 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
                 par_end_op[h->op]++;
                 par_flush(ex);
             } else if (!skip_par && par_run_op(h->op) == 2 && par_start(ex)) {
-                if (!P.next) {
+                if (!P.next && par_collect_walk_on()) {
                     int res = 0;
                     h = par_collect_walk(ex, h, depth, &res);
                     if (res) continue;

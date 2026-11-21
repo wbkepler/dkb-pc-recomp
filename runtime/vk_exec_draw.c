@@ -5135,6 +5135,9 @@ static int bind_handles(uint64_t *dst, int cap, const p_bind_handles *b) {
     return 1;
 }
 
+// Keep the bind cases below in sync with par_bind_op (runtime/vk_exec.c), which handles them inline during parallel
+// slice collection; any new dirty bit or state field added to a bind case here (such as vertex-buffer/stream dirty
+// tracking) must be mirrored in par_bind_op or reset when collection flushes (par_flush).
 static void op_draw_impl(VkExec *ex, uint32_t op, const void *payload) {
     DrawCtx *const dc = DC_OF(ex);
     geometry_context_log(ex, op, payload);

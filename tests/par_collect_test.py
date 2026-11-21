@@ -123,7 +123,7 @@ static _Thread_local const op_hdr *walk_ret[CALL_DEPTH];
 static _Thread_local int walk_depth;
 static uint16_t pss0[PAR_MAX_SLICES];
 static volatile uint8_t pdone[PAR_MAX_SLICES];
-static int par_skip_start;
+static _Thread_local int par_skip_start;
 
 static struct {
     const op_hdr *next;
