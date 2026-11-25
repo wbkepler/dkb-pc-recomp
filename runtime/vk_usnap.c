@@ -55,6 +55,7 @@ static struct {
     int mode;                   // rt_knob: 0 off, 1 on, 2 ab
     int on;                     // this submission has a snapshot
     int fast;                   // this submission takes the USNAP_FAST shortcuts (set in vk_usnap_begin)
+    int reset_fast;             // DKB_RESET_FAST, for wr_prune's sorted-prefix merge (set in vk_usnap_begin)
     uint64_t fence, gen;
     uint64_t dseq;              // drops made so far (vk_usnap_drops)
     Arena *arena;
@@ -437,7 +438,7 @@ static void wr_prune(void) {
     for (int i = 0; i < old; i++)
         if (U.wr[i].fence > done) U.wr[nold++] = U.wr[i];   // stays sorted
     int m = 0;
-    if (sorted_end >= 256 && sorted_end < nnew) {
+    if (U.reset_fast && sorted_end >= 256 && sorted_end < nnew) {
         // Indirect resets append thousands of already-sorted ranges ahead of the threads' lists: sort only the unsorted
         // tail and merge all three sorted streams in one pass.
         sort_new_writes(fresh + sorted_end, nnew - sorted_end, &tmp, &ctmp);
@@ -459,7 +460,7 @@ static void wr_prune(void) {
             }
         }
     } else {
-        if (sorted_end < nnew) sort_new_writes(fresh, nnew, &tmp, &ctmp);
+        if (!U.reset_fast || sorted_end < nnew) sort_new_writes(fresh, nnew, &tmp, &ctmp);
         for (int a = 0, b = 0; a < nold || b < nnew;) {
             const Wrote *w = b >= nnew || (a < nold && U.wr[a].lo <= fresh[b].lo) ? &U.wr[a++] : &fresh[b++];
             if (m && w->lo <= out[m - 1].hi) {
@@ -542,6 +543,10 @@ static void usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
     static int fast_mode;   // stored +1: 0 is "not read yet"
     if (!fast_mode) fast_mode = rt_knob("USNAP_FAST", "1") + 1;
     U.fast = RT_KNOB_ON(fast_mode - 1);
+    static int reset_fast_mode;
+    if (!reset_fast_mode)
+        reset_fast_mode = rt_knob("RESET_FAST", vk_ctx()->props.vendorID == 0x10de ? "1" : "0") + 1;
+    U.reset_fast = RT_KNOB_ON(reset_fast_mode - 1);
     static int local_mode;   // the same for DKB_USNAP_DROP_LOCAL
     if (!local_mode) local_mode = rt_knob("USNAP_DROP_LOCAL", "1") + 1;
     drop_local = RT_KNOB_ON(local_mode - 1);

@@ -845,7 +845,7 @@ static int reset_pipe_dispatch(VkExec *ex, VkBuffer dst, const uint64_t *offs, u
 }
 #endif
 
-typedef struct { uint64_t gen, lo, hi; } ResetMapCtx;
+typedef struct { uint64_t pgen, mgen, lo, hi; } ResetMapCtx;
 
 static int reset_mapped(void *context, uint64_t addr, uint32_t size) {
     (void)context;
@@ -855,12 +855,13 @@ static int reset_mapped(void *context, uint64_t addr, uint32_t size) {
 
 static int reset_mapped_fast(void *context, uint64_t addr, uint32_t size) {
     ResetMapCtx *ctx = context;
-    uint64_t g = vk_mem_pool_gen();
-    if (ctx->lo < ctx->hi && g == ctx->gen && addr >= ctx->lo && addr + size <= ctx->hi) return 1;
+    uint64_t pg = vk_mem_pool_gen(), mg = vk_mem_gen();
+    if (ctx->lo < ctx->hi && pg == ctx->pgen && mg == ctx->mgen && addr >= ctx->lo && addr + size <= ctx->hi) return 1;
     VkMemSpan span;
     uint64_t lo = 0, hi = 0, base = 0;
     if (!vk_mem_resolve_range(addr, size, &span, &lo, &hi, &base)) return 0;
-    if (lo < hi && vk_mem_pool_gen() == g) ctx->gen = g, ctx->lo = lo, ctx->hi = hi;
+    if (lo < hi && vk_mem_pool_gen() == pg && vk_mem_gen() == mg)
+        ctx->pgen = pg, ctx->mgen = mg, ctx->lo = lo, ctx->hi = hi;
     else ctx->lo = ctx->hi = 0;
     return 1;
 }
@@ -1081,7 +1082,8 @@ int vk_exec_reset_indirect(VkExec *ex, uint64_t list_addr, uint32_t descriptor_b
     NvnIndirectResetList list;
     if (!nvn_indirect_reset_list(list_addr, descriptor_bytes, first, count, &list)) return 0;
     static int fast_mode = -1;
-    const int fast = knob_on(&fast_mode, "RESET_FAST", "1");
+    // Default on NVIDIA only, matching DKB_SPARSE_MIRROR_COPY: compute reset has been measured on NVIDIA only.
+    const int fast = knob_on(&fast_mode, "RESET_FAST", vk_ctx()->props.vendorID == 0x10de ? "1" : "0");
     static uint64_t *ptrs_buf;
     static uint32_t ptrs_cap;
     uint64_t *pointers;
@@ -1158,7 +1160,7 @@ int vk_exec_reset_indirect(VkExec *ex, uint64_t list_addr, uint32_t descriptor_b
             g_offs = o, runs = r, g_cap = nsorted;
         }
         vk_exec_barrier(ex);   // the reset writes follow every earlier access to the records
-        uint64_t c_gen = 0, c_lo = 0, c_hi = 0, c_base = 0;
+        uint64_t c_pgen = 0, c_mgen = 0, c_lo = 0, c_hi = 0, c_base = 0;
         VkMemSpan c_span = {0};
         int c_valid = 0, unbacked = 0;
         void *g_pool = NULL;
@@ -1170,11 +1172,12 @@ int vk_exec_reset_indirect(VkExec *ex, uint64_t list_addr, uint32_t descriptor_b
         for (uint32_t i = 0; i < nsorted; i++) {
             uint64_t addr = sorted[i];
             VkMemSpan span;
-            if (c_valid && addr >= c_lo && addr + rec <= c_hi && vk_mem_pool_gen() == c_gen) {
+            if (c_valid && addr >= c_lo && addr + rec <= c_hi &&
+                vk_mem_pool_gen() == c_pgen && vk_mem_gen() == c_mgen) {
                 span = c_span;
                 span.offset = addr - c_base;
             } else {
-                uint64_t lo = 0, hi = 0, base = 0, g = vk_mem_pool_gen();
+                uint64_t lo = 0, hi = 0, base = 0, pg = vk_mem_pool_gen(), mg = vk_mem_gen();
                 int ok = vk_mem_resolve_range(addr, rec, &span, &lo, &hi, &base);
                 if (!ok && !unbacked) rt_fatal("vk: an indirect-reset mapping changed during replay");
                 if (ok) VK_MEM_USE(span);
@@ -1182,8 +1185,8 @@ int vk_exec_reset_indirect(VkExec *ex, uint64_t list_addr, uint32_t descriptor_b
                     unbacked = 1, c_valid = 0;
                     continue;
                 }
-                if (lo < hi && vk_mem_pool_gen() == g)
-                    c_gen = g, c_lo = lo, c_hi = hi, c_base = base, c_span = span, c_valid = 1;
+                if (lo < hi && vk_mem_pool_gen() == pg && vk_mem_gen() == mg)
+                    c_pgen = pg, c_mgen = mg, c_lo = lo, c_hi = hi, c_base = base, c_span = span, c_valid = 1;
                 else c_valid = 0;
             }
             if (g_n && (span.pool != g_pool || span.buffer != g_buf || span.cls != g_cls)) {

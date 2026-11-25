@@ -37,7 +37,7 @@ typedef struct { uint64_t lo, hi, fence; } Wrote;
 typedef struct { uint64_t lo, hi; } Rng;
 #define ALIGN 256u
 #define RNG_C4 1ull
-static struct { Wrote *wr; int nwr, cwr; int fast; Rng *col; int ncol, ccol; uint64_t repeats; int mode, on;
+static struct { Wrote *wr; int nwr, cwr; int fast, reset_fast; Rng *col; int ncol, ccol; uint64_t repeats; int mode, on;
                 uint64_t wr_added, wr_coalesced, fence; } U;
 static void *grow(void *p, int *cap, size_t elem) {
     int n = *cap ? *cap * 2 : 1024;
@@ -502,10 +502,11 @@ static int sorted_prefix_cases(void) {
             ref_wr[nold] = ref_wr[nold + npref - 1];
             ref_wr[nold + npref - 1] = tmp;
         }
-        U.wr = ref_wr, U.cwr = 400000, U.nwr = n0, nwr_sorted = nold, wr_prune();
+        U.reset_fast = 0, U.wr = ref_wr, U.cwr = 400000, U.nwr = n0, nwr_sorted = nold, wr_prune();
         int nr0 = U.nwr;
-        U.wr = loc_wr, U.cwr = 400000, U.nwr = n1, nwr_sorted = nold, wr_prune();
+        U.reset_fast = 1, U.wr = loc_wr, U.cwr = 400000, U.nwr = n1, nwr_sorted = nold, wr_prune();
         int nr1 = U.nwr;
+        U.reset_fast = 0;
         checks++;
         if (nr0 != nr1 || memcmp(ref_wr, loc_wr, (size_t)nr0 * sizeof *ref_wr)) {
             fails++, printf("FAIL: sorted_prefix round %d: %d vs %d ranges\n", round, nr1, nr0);
