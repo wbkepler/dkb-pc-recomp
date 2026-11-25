@@ -78,11 +78,6 @@ static void memory_event(Cpu *c, cmd_t *o, int event, uint64_t min) {
 // DKB_CMD_REC_FAST (default 1, "ab" alternates on DKB_AB): batched CallCommands/CopyCommands locking and ref-counter
 // updates, thread-local generation-tagged UBO dedup + fast-path take_recording, off-lock copy freeing in
 // release_copies, and offset-indexed deferred bind resolution at submit.
-__attribute__((weak)) int rt_ab(void) { return 0; }
-__attribute__((weak)) int rt_knob(const char *name, const char *def) {
-    (void)name;
-    return !def || strcmp(def, "0") != 0;
-}
 static int cmd_rec_fast_mode = -1;
 static inline int cmd_rec_fast(void) {
     int m = __atomic_load_n(&cmd_rec_fast_mode, __ATOMIC_RELAXED);
@@ -110,6 +105,11 @@ typedef struct { uint64_t magic, bytes, made_at, used_at, deferred, block; uint3
                  nvn_range_list *ubo; def_off_list *def_list; ubo_inline_list ubo_inl; } copy_prefix;
 _Static_assert(sizeof(copy_prefix) % 8 == 0, "records stay 8-byte aligned");
 _Static_assert(OP_COUNT_ <= 64, "recording scan bitmask fits in uint64_t");
+_Static_assert(sizeof(p_jump) == 8, "OP_CALL record is 16 bytes");
+static inline void used_at_max(copy_prefix *pf, uint64_t val) {
+    uint64_t cur = __atomic_load_n(&pf->used_at, __ATOMIC_RELAXED);
+    while (cur < val && !__atomic_compare_exchange_n(&pf->used_at, &cur, val, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+}
 #define COPY_CALLS 1u   // copy_prefix.flags (see "recording copies" below)
 #define COPY_WAITS 2u
 static void put_hdr(uint8_t *p, uint32_t op, uint32_t size) {
@@ -1242,7 +1242,7 @@ static void inline_recording(cmd_t *o, uint64_t handle, const char *what) {
             rt_fatal("nvn: %s: command handle %#llx is not a live recording (released or never recorded)", what,
                      (unsigned long long)handle);
         }
-        __atomic_store_n(&pf->used_at, __atomic_load_n(&nsubmits, __ATOMIC_RELAXED), __ATOMIC_RELAXED);
+        used_at_max(pf, __atomic_load_n(&nsubmits, __ATOMIC_RELAXED));
         bytes = pf->bytes;
         const int shallow = pf->depth < CALL_REF_DEPTH;
         const int ref = pf->deferred == 1 && bytes > 16 && o->recording && shallow;
@@ -1310,8 +1310,7 @@ static void call_commands_fast(cmd_t *o, const uint64_t *h, int n, const char *w
                 rt_fatal("nvn: %s: command handle %#llx is not a live recording (released or never recorded)", what,
                          (unsigned long long)handle);
             }
-            if (__atomic_load_n(&pf->used_at, __ATOMIC_RELAXED) != sub)
-                __atomic_store_n(&pf->used_at, sub, __ATOMIC_RELAXED);
+            used_at_max(pf, sub);
             uint64_t bytes = pf->bytes;
             const int shallow = pf->depth < CALL_REF_DEPTH;
             if (__builtin_expect(pf->deferred == 1 && bytes > 16 && o->recording && shallow, 1)) {
@@ -2016,8 +2015,7 @@ void nvn_submit_prepare(const uint64_t *handles, int n) {
                 rt_fatal("nvn: QueueSubmitCommands: command handle %#llx is not a live recording (released or never recorded)",
                          (unsigned long long)handle);
             }
-            if (__atomic_load_n(&pf->used_at, __ATOMIC_RELAXED) != now)
-                __atomic_store_n(&pf->used_at, now, __ATOMIC_RELAXED);
+            used_at_max(pf, now);
         }
         plat_mutex_unlock_shared(&copy_lock);
         for (int i = 0; i < n; i++) nvn_mode_trace(NVN_MODE_HANDLE, 0, handles[i], (uint32_t)i, now);

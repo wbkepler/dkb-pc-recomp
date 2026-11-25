@@ -61,6 +61,8 @@ void rt_fatal(const char *format,...) {(void)format;abort();}
 int hdr_trace_hit(const Cpu *c,const char *name) {(void)c;(void)name;return 0;}   // DKB_HDR_TRACE off
 void hdr_trace_dump(const char *name,const void *p) {(void)name;(void)p;}
 void nvn_called(uint8_t *seen,const char *name) {(void)seen;(void)name;__atomic_fetch_add(&normal_calls,1,__ATOMIC_RELAXED);}
+int rt_ab(void) { return 0; }
+int rt_knob(const char *name,const char *def) {(void)name;return !def||strcmp(def,"0")!=0;}
 int cfg_bool(const char *name) {
     if(!strcmp(name,"DKB_CALL_REF"))return 0;   // nvn_api_cmd.c inline_recording: copies, as before
     if(strcmp(name,"DKB_NVN2_MODE_TRACE"))abort();__atomic_fetch_add(&config_calls,1,__ATOMIC_RELAXED);return on;

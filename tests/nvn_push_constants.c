@@ -70,6 +70,8 @@ void rt_fatal(const char *fmt, ...) {
     va_end(ap);
     abort();
 }
+int rt_ab(void) { return 0; }
+int rt_knob(const char *name, const char *def) { (void)name; return !def || strcmp(def, "0") != 0; }
 // nvn_api_cmd.c reads DKB_CALL_REF; off, so CallCommands copies the recording in as this fixture expects.
 int cfg_bool(const char *name) {
     if (strcmp(name, "DKB_CALL_REF")) rt_fatal("unexpected setting lookup %s", name);

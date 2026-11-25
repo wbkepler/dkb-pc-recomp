@@ -51,6 +51,8 @@ void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 void plat_mutex_lock_shared(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock_shared(PlatMutex *m) { (void)m; }
 uint64_t gfx_replayed_submits(void) { return replayed; }
+int rt_ab(void) { return 0; }
+int rt_knob(const char *name, const char *def) { (void)name; return !def || strcmp(def, "0") != 0; }
 // DKB_CALL_REF from USNAP_LIST_CALL_REF (tests/usnap_list_test.py runs the fixture with 0 and 1): the recorder reads it
 // once.
 int cfg_bool(const char *name) {

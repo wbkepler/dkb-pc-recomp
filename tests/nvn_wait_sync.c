@@ -74,6 +74,8 @@ void nvn_pool_flushed(const pool_t *p, uint64_t off, uint64_t size) {
     (void)p; (void)off; (void)size; rt_fatal("unexpected pool flush");
 }
 uint64_t rt_original(Cpu *c) { (void)c; rt_fatal("unexpected guest observer"); return 0; }
+int rt_ab(void) { return 0; }
+int rt_knob(const char *name, const char *def) { (void)name; return !def || strcmp(def, "0") != 0; }
 int cfg_bool(const char *name) {   // DKB_CALL_REF on: recordings with deferred pushes are copied in either way
     if (!strcmp(name, "DKB_CALL_REF")) return 1;
     rt_fatal("unexpected setting lookup");
