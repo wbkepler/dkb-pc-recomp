@@ -18,6 +18,9 @@
 // with DKB_REPLAY_ASYNC. DKB_UBO_SNAPSHOT=0 binds live memory as before; =ab alternates (DKB_AB).
 // DKB_USNAP_FAST=0 runs collect, sort, and drop as they were; by default each step takes a shortcut (repeated ranges
 // skipped, fewer radix passes, repeated GPU writes merged), and its comment says why the result is the same.
+// DKB_USNAP_OPT=0 disables the additional snapshot optimizations (8-byte radix keys + gather merge in wr_prune,
+// streaming AVX2 BAR copies into write-combined arenas, monotone wr_cur scan, and wider wr_local coalescing); on ("1")
+// by default, "ab" alternates per submission.
 // DKB_USNAP_LIST=1 (on by default; "0" turns it off, "ab" alternates per submission) takes each recording's ranges
 // from a merged list built at EndRecording (nvn_api_cmd.c take_recording, nvn_ubo_list_build below, composing callee
 // lists across OP_CALL) instead of walking every op here; DKB_USNAP_LIST_CHECK=1 also walks the full op tree and logs
@@ -738,24 +741,16 @@ static void usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
     int want_cpu = __atomic_load_n(&cpu_reads, __ATOMIC_RELAXED);
     U.nreg = 0;
     uint64_t total = 0, cpu_total = 0;
-    uint64_t memo_lo = 0, memo_hi = 0;
-    int memo_ok = 0, wr_cur = 0;
+    int wr_cur = 0;
     for (int i = 0; i < U.ncol;) {
         uint64_t lo = U.col[i].lo & ~RNG_C4, hi = U.col[i].hi, c4 = U.col[i].lo & RNG_C4;
         for (i++; i < U.ncol && (U.col[i].lo & ~RNG_C4) <= hi; i++) {
             c4 |= U.col[i].lo & RNG_C4;
             if (U.col[i].hi > hi) hi = U.col[i].hi;
         }
-        int ok = 0;
-        if (U.opt && memo_ok && lo >= memo_lo && hi <= memo_hi) {
-            ok = 1;
-        } else {
-            VkMemSpan sp;
-            ok = vk_mem_resolve(lo, hi - lo, &sp) && !sp.alloc && sp.pool && sp.avail >= hi - lo &&
-                 (sp.cls == VK_MCLS_HOST_CACHED || sp.cls == VK_MCLS_HOST_UNC);
-            if (U.opt && ok) memo_lo = lo, memo_hi = lo + sp.avail, memo_ok = 1;
-        }
-        if (!ok) {
+        VkMemSpan sp;
+        if (!vk_mem_resolve(lo, hi - lo, &sp) || sp.alloc || !sp.pool || sp.avail < hi - lo ||
+            (sp.cls != VK_MCLS_HOST_CACHED && sp.cls != VK_MCLS_HOST_UNC)) {
             U.refused++;
             continue;
         }
@@ -946,6 +941,9 @@ static void wr_local(uint64_t addr, uint64_t n, uint64_t fence) {
     plat_mutex_lock(&w->lock);
     w->added++;
     Wrote *last = w->n ? &w->a[w->n - 1] : NULL;   // as drop coalesces the tail of U.wr
+    // Both U.opt coalescing rules preserve wr_prune's exact output: a sub-range with fence <= last->fence never outlives
+    // last and merges into it whenever live; two touching/overlapping ranges with the same fence live or expire together
+    // in wr_prune and always merge into their union with that fence.
     if (U.fast && last && last->lo == addr && last->hi == hi) {
         if (fence > last->fence) last->fence = fence;
         w->coalesced++;
