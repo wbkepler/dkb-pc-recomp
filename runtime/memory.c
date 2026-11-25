@@ -151,10 +151,10 @@ static void thaw_locked(uint64_t r, int why, int writable) {
     if (!f) return;
     uint64_t a = r << FRZ_SHIFT, end = a + FRZ_SIZE, b;
     // A region committed throughout at its freeze is still committed throughout and read-only: nothing decommits a page
-    // or changes its protection without thawing first (commit, decommit and protect below), the lazy heap's fault handler
-    // and mem_touch commit reserved pages only, and the one race left (win32.c lazy_commit) can only make a page
-    // read-write again. A guard that makes one of its pages PAGE_NOACCESS (mem_guard_own, mem_probe_protect) marks the
-    // region FRZ_HOLES under frz_lock first, so a FRZ_WHOLE region holds no guarded page. So one protection change
+    // or changes its protection without thawing first (commit, decommit and protect below), and the lazy heap's fault
+    // handler and mem_touch commit reserved pages only, calling lazy_commit_thaw before and after committing a hole
+    // (which thaws any frozen region under frz_lock). A guard that makes one of its pages PAGE_NOACCESS (mem_guard_own,
+    // mem_probe_protect) marks the region FRZ_HOLES under frz_lock first, so a FRZ_WHOLE region holds no guarded page. So one protection change
     // thaws it, with no query. A query would report the whole run of
     // read-only pages after the address, all the frozen regions above it, and on Windows its cost grows with that run:
     // with a query per region, a layer exit's thaw of the 450 MiB terrain pool (vk_pool_fini, 226 regions) took 50 to
@@ -267,7 +267,8 @@ static int freeze_locked(uint64_t r, int *why) {
     for (uint64_t x = a, y; x < end; x = y) {
         int st = plat_mem_state(x, end, &y);
         if (st == PLAT_PROT_RW) {
-            if (n == 256) return *why = FRZ_NO_STATE, 0;
+            // Cap fragmented PRB_OWN regions at 32 runs to bound VirtualProtect calls under frz_lock (notably Proton).
+            if (n == 256 || (held && n == 32)) return *why = FRZ_NO_STATE, 0;
             run[n][0] = x, run[n][1] = y, n++;
         } else if (st == PLAT_PROT_NONE) {
             if (!frz_lazy || !held || !prb_all_own(x, y)) return *why = FRZ_NO_STATE, 0;
@@ -414,10 +415,13 @@ static void prb_record(int kind, uint64_t addr, uint32_t v, int write, int guest
         prb_rec[kind][k] = (PrbRec){__atomic_load_n(&mem_probe_frame, __ATOMIC_RELAXED), addr, rip, v, write, guest, kind};
 }
 
-// The guarded pages and the frozen regions (frz_lock). A guarded page lies in a frozen region when its guard came after
-// the freeze: mem_guard_own, mem_guard_own_range and mem_probe_protect make it PAGE_NOACCESS under frz_lock and mark a
-// FRZ_WHOLE region FRZ_HOLES (frz_holes_locked), so the region's thaw queries its read-only runs and leaves the page
-// alone instead of making the whole 2 MiB read-write; freeze_locked refuses a region that holds one. Every protection
+// The guarded pages and the frozen regions (frz_lock). A guarded page lies in a frozen region either when its guard
+// came after the freeze (mem_guard_own, mem_guard_own_range and mem_probe_protect make it PAGE_NOACCESS under frz_lock
+// and mark a FRZ_WHOLE region FRZ_HOLES via frz_holes_locked, so the region's thaw queries its read-only runs and
+// leaves the page alone instead of making the whole 2 MiB read-write) or when freeze_locked froze a region holding
+// settled GPU-owned (PRB_OWN) pages as FRZ_HOLES under DKB_FRZ_LAZY=1 (leaving those PAGE_NOACCESS pages untouched).
+// freeze_locked still refuses regions with a claimed (PRB_BUSY) or read-probe (PRB_ON) page, and refuses PRB_OWN pages
+// when DKB_FRZ_LAZY=0. Every protection
 // change of a guarded page is made under frz_lock, as thaws and freezes make their query and protection changes under
 // it, so neither runs between the other's query and protection change:
 // - a page the read probe opens goes back to what it would be without the probe (prb_unprotect): read-only in a
@@ -1119,9 +1123,10 @@ static int touch_range(uint64_t a, uint64_t n, int must) {
 
 // ---- lazy-heap commits in the background (mem_commit_later)
 // A staged pool (vk_memory.c, DKB_MIRROR_STAGED) is never imported, so the pages of it the CPU never touched stay
-// reserved, where an imported pool's import commits them all (mem_touch). freeze_locked never freezes a 2 MiB region
-// with a lazy-heap hole (fault_veh may commit it at any moment), so the regions over such a pool are write-watch queried
-// every frame: with DKB_MIRROR_STAGED=all on the Hilltop Layer of Surf Hills (3.2.0) about 300 MiB were frozen instead
+// reserved, where an imported pool's import commits them all (mem_touch). With DKB_FRZ_LAZY=0, freeze_locked never
+// freezes a 2 MiB region with a lazy-heap hole, so the regions over such a pool are write-watch queried every frame
+// (with DKB_FRZ_LAZY=1, freeze_locked freezes them as FRZ_HOLES/FRZ_EMPTY, and this thread still commits the holes so
+// they consolidate into FRZ_WHOLE regions): with DKB_MIRROR_STAGED=all on the Hilltop Layer of Surf Hills (3.2.0) about 300 MiB were frozen instead
 // of about 730, and the queries covered 630 MiB a frame instead of 220. This thread commits those holes, as the import
 // would have, CL_DELAY_MS after the pool's first use and CL_SLICE bytes at a time, so the frame that first uses the
 // pools (the point of the staged mirror is that its first use costs no import) and the replay's queries meanwhile wait

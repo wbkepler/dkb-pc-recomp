@@ -838,9 +838,10 @@ static int lazy_commit_retry(uint64_t x, size_t n) {
 // VirtualAlloc without another VirtualQuery; otherwise walk [a, e) by region state so lower reserved pages before a
 // mid-chunk fault are committed too, and mark every whole 64 KiB chunk inside [a, e) in lazy_map. Check-then-commit is
 // not atomic against mem_freeze: a run found reserved here could be committed by another fault and frozen read-only
-// before our VirtualAlloc makes it writable. memory.c freeze_locked refuses a region with a reserved hole in the lazy
-// heap, which closes it for holes that exist at the freeze; the gap left is this narrow window, and the handler takes
-// no lock on purpose.
+// before our VirtualAlloc makes it writable. With DKB_FRZ_LAZY=1 (default), memory.c freeze_locked may freeze a region
+// holding a reserved lazy-heap hole, so lazy_commit_hook (memory.c lazy_commit_thaw) runs before and after committing
+// reserved pages: it checks frz[] and frz_active lock-free and takes frz_lock only when the region is frozen or a
+// freeze scan is in flight, thawing it to close the race. With DKB_FRZ_LAZY=0, freeze_locked refuses lazy-heap holes.
 static void (*lazy_commit_hook)(uint64_t addr, uint64_t size, int post);
 
 void plat_mem_lazy_commit_hook(void (*fn)(uint64_t addr, uint64_t size, int post)) {
