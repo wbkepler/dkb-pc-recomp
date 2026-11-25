@@ -75,12 +75,6 @@ static HostTls *tl_head;
 static PlatMutex tl_lock = PLAT_MUTEX_INIT;
 static int fast_mode = -1, fast_applied = -1;
 
-// Weak fallback so standalone unit tests can link hostfn.c without perf.c.
-__attribute__((weak)) int rt_knob(const char *name, const char *def) {
-    (void)name;
-    return def && strcmp(def, "0") != 0;
-}
-
 static GuestFn table_find(const RtHostEntry *start, const RtHostEntry *stop, const char *name) {
     __asm__("" : "+r"(start), "+r"(stop));   // separate objects: keep the compiler from reasoning about them
     for (const RtHostEntry *p = start; p < stop; p++)
@@ -249,7 +243,7 @@ static void hostfn_entry_fast(Cpu *c) {
         if (__builtin_expect(!n && kern_preempt_pending(t), 0)) kern_host_left(t);
         return;
     }
-    s.fn(c);
+    __attribute__((musttail)) return s.fn(c);
 }
 
 // A guest jump to the rt_call return sentinel: guest code used x30 as data, which a lifted RET never does.
@@ -266,13 +260,9 @@ void hostfn_seal(void) {
     int n = rt_linked_modules(mods, 16);
     rt_dispatch_init(mods, n);
     fast_mode = rt_knob("HOSTFN_FAST", "1");
-    if (fast_mode == 1) {
-        fast_applied = 1;
-        rt_dispatch_set_hostfn(hostfn_entry_fast, (uint64_t)nslots);
-    } else {
-        fast_applied = 0;
-        if (fast_mode == 2) rt_log("hostfn: fast dispatch in the B blocks of DKB_AB only (DKB_HOSTFN_FAST=ab)");
-    }
+    fast_applied = fast_mode == 1;
+    rt_dispatch_set_hostfn(hostfn_entry_fast, fast_applied ? (uint64_t)nslots : 0);
+    if (fast_mode == 2) rt_log("hostfn: fast dispatch in the B blocks of DKB_AB only (DKB_HOSTFN_FAST=ab)");
 }
 
 void hostfn_ab_sync(int ab_side) {
@@ -280,7 +270,7 @@ void hostfn_ab_sync(int ab_side) {
     int on = ab_side != 0;
     if (on == fast_applied) return;
     fast_applied = on;
-    rt_dispatch_set_hostfn(hostfn_entry_fast, on ? (uint64_t)nslots : 0);
+    rt_dispatch_set_hostfn_slots(on ? (uint64_t)nslots : 0);
 }
 
 uint64_t hostfn_calls(void) {

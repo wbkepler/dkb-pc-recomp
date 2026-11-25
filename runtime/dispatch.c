@@ -225,6 +225,10 @@ void rt_dispatch_set_hostfn(GuestFn entry, uint64_t slots) {
     __atomic_store_n(&D.hostfn_slots, slots, __ATOMIC_RELEASE);
 }
 
+void rt_dispatch_set_hostfn_slots(uint64_t slots) {
+    __atomic_store_n(&D.hostfn_slots, slots, __ATOMIC_RELEASE);
+}
+
 // Host functions, and the fatal error. A separate tail call keeps the fast path below free of a stack frame.
 __attribute__((noinline)) static void dispatch_slow(Cpu *c) {
     uint64_t hi = __builtin_rotateright64(c->pc - RT_HOSTFN_BASE, 4);
