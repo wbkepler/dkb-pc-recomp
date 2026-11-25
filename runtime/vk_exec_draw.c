@@ -333,8 +333,10 @@ typedef struct DrawCtx {
     struct { uint64_t serial; int st; uint32_t m; } slotm[SLOTM_N];
     struct { uint64_t context, h, tok; uint32_t gen; SubRange r; } FM[FM_N];
     // Per-stage feedback_scan memos (0 vertex, 1 fragment, 2 geometry) so native GS draws do not thrash one slot.
+    // Keying by GfxShader * (here and in tw_cmp below) is safe because gfx_shader.c keeps translated game shaders in an
+    // append-only cache for the process lifetime and never frees or recycles their pointers.
     struct { const VkExec *ex; const GfxShader *sh; uint64_t desc; uint32_t tser, pass, sg, mask; } fb_memo[3];
-    // twin_prepare memo and per-shader compare-sampler presence cache (64-entry direct-mapped).
+    // twin_prepare memo and per-shader compare-sampler presence cache (64-entry direct-mapped; GfxShader * never freed).
     struct { int valid; const VkExec *ex; const GfxShader *vs, *fs; uint64_t desc; uint32_t tser, pass, sg; int twv_n; } TW_MEMO;
     struct { const GfxShader *sh; int8_t has; } tw_cmp[64];
     struct { int on, valid, has_fs, has_gs; MemoKey k; const GfxShader *vs, *fs, *gs; } SM;

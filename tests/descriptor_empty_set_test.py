@@ -32,9 +32,20 @@ def source(draw):
                           if line.strip().startswith(('case R_PushTpl:', 'case R_Push:')))
     if len(consumers.splitlines()) != 2:
         raise RuntimeError('the recorder push consumer seam changed')
-    production = '\n'.join(function(draw, prefix) for prefix in (
-        'static int nvn_stage_of(', 'static void write_set(', 'static void bind_resources('))
+    binder_fns = ['static int nvn_stage_of(', 'static void write_set(', 'static void bind_resources(']
+    extra_defs = []
+    if 'static inline int draw_fast_on(' in draw:
+        extra_defs.append('DRAW_SHARED int draw_fast_mode_val DRAW_SHARED_INIT(-1);')
+        extra_defs.append('static const RsList *rs_list(const VkExec *ex, const VkPipeInfo *info) { (void)ex; (void)info; return NULL; }')
+        binder_fns = ['static inline int draw_fast_on(', 'static inline int mem_eq_fast(',
+                      'static inline void mem_cp_fast('] + binder_fns
+    production = '\n'.join(extra_defs + [function(draw, prefix) for prefix in binder_fns])
     fixture = (ROOT / 'tests/descriptor_empty_set.c').read_text()
+    if 'static int tex_repeat(VkExec *ex, const VkPipeInfo *info, const TexPend *tp, int n, int has_img)' in draw:
+        fixture = fixture.replace(
+            'static int tex_repeat(VkExec *ex,const VkPipeInfo *info,const TexPend *tp,int n) { (void)ex; (void)info; (void)tp; (void)n; return 0; }',
+            'static int tex_repeat(VkExec *ex,const VkPipeInfo *info,const TexPend *tp,int n,int has_img) { (void)ex; (void)info; (void)tp; (void)n; (void)has_img; return 0; }',
+            1)
     return fixture.replace('@CONTEXT@', context).replace('@RECORDER@', declarations + '\n' + producers).replace(
         '@CONSUMERS@', consumers).replace('@BINDER@', production)
 

@@ -38,7 +38,8 @@ def draw_context(source):
     res = source[source.index('typedef struct { VkBuffer buf; VmaAllocation alloc;'):
                  source.index('} CbRes;') + len('} CbRes;')]
     ctx = source[source.index('// ---- the draw context'):source.index('} DrawCtx;') + len('} DrawCtx;')]
-    copy = ['#define DC_OF(ex) ((ex)->draw)', '#define IS_HELPER(dc) ((void)(dc), 0)', '#define IN_SLICE(dc) ((void)(dc), 0)',
+    copy = ['#define DRAW_SHARED', '#define DRAW_SHARED_INIT(...) = __VA_ARGS__',
+            '#define DC_OF(ex) ((ex)->draw)', '#define IS_HELPER(dc) ((void)(dc), 0)', '#define IN_SLICE(dc) ((void)(dc), 0)',
             '#define ON_HELPER(ex) 0',
             '#include "vk_exec_draw_helper.h"']
     return '\n'.join(bounds + [res, ctx] + copy) + '\n'

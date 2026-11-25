@@ -36,8 +36,8 @@ def source():
 static unsigned checks, failures;
 #define CHECK(c,message) do { checks++; if (!(c)) { failures++; fprintf(stderr,"FAIL: %s\n",message); } } while (0)
 void rt_fatal(const char *fmt,...) { (void)fmt; abort(); }
-static int ab;   // every switch is "ab": on while this is 1
-int rt_knob(const char *name,const char *def) { (void)name; (void)def; return 2; }
+static int ab, draw_fast;   // descriptor memo switches follow ab; DRAW_FAST tested separately below
+int rt_knob(const char *name,const char *def) { (void)def; return !strcmp(name,"DRAW_FAST") ? draw_fast : 2; }
 int rt_ab(void) { return ab; }
 // Scratch in host memory: one 4 KiB block per copy, its index as the offset, so equal ranges mean the same copy.
 static uint8_t scratch_mem[1024][4096];
@@ -114,6 +114,28 @@ static void c0_cases(VkExec *ex) {
     ex->ssbo[NVN_STAGE_VS][0]=y;
     memcpy(&got,copy_at(c0_info(ex,NVN_STAGE_VS)),8);
     CHECK(fills==1 && got==y.addr,"c0 off: the inputs are compared on every ask");
+
+    // DRAW_FAST=1: graphics c0 updates the storage table (0x110 for VS) and base_instance (0x644) in place.
+    memset(&ctx.B,0,sizeof ctx.B);
+    draw_fast=1, ab=1, fills=0;
+    __atomic_store_n(&draw_fast_mode_val,-1,__ATOMIC_RELEASE);
+    ex->ssbo[NVN_STAGE_VS][0]=x, ctx.ssbo_serial[NVN_STAGE_VS]++, ctx.c0_binst=0;
+    VkDescriptorBufferInfo f0=c0_info(ex,NVN_STAGE_VS);
+    CHECK(fills==1,"c0 draw_fast: cold bank initializes via c0_fill");
+    ex->ssbo[NVN_STAGE_VS][0]=y, ctx.ssbo_serial[NVN_STAGE_VS]++;
+    VkDescriptorBufferInfo f1=c0_info(ex,NVN_STAGE_VS);
+    uint64_t addr_got=0; uint32_t size_got=0, bi_got=0;
+    memcpy(&addr_got,copy_at(f1)+0x110,8), memcpy(&size_got,copy_at(f1)+0x118,4);
+    CHECK(fills==1 && f1.offset!=f0.offset && addr_got==y.addr && size_got==(uint32_t)y.size,
+          "c0 draw_fast: ssbo change updates table in place without re-calling c0_fill");
+    ctx.c0_binst=11;
+    VkDescriptorBufferInfo f2=c0_info(ex,NVN_STAGE_VS);
+    memcpy(&bi_got,copy_at(f2)+0x644,4);
+    CHECK(fills==1 && f2.offset!=f1.offset && bi_got==11,"c0 draw_fast: base_instance updates in place");
+    VkDescriptorBufferInfo f3=c0_info(ex,NVN_STAGE_VS);
+    CHECK(f3.offset==f2.offset,"c0 draw_fast: unchanged serial and base_instance reuse range");
+    draw_fast=0;
+    __atomic_store_n(&draw_fast_mode_val,-1,__ATOMIC_RELEASE);
 }
 
 static void samp_gen_cases(void) {
